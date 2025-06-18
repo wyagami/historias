@@ -13,6 +13,12 @@
         body {
             font-family: 'Inter', sans-serif;
         }
+        /* Garante que o backdrop-blur funcione no Firefox */
+        .backdrop-blur-sm {
+            --tw-backdrop-blur: blur(4px);
+            -webkit-backdrop-filter: var(--tw-backdrop-filter);
+            backdrop-filter: var(--tw-backdrop-filter);
+        }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-purple-800 to-indigo-900 text-white p-6 flex flex-col items-center justify-center">
@@ -22,12 +28,19 @@
         Gerador de Histórias Ilustradas
     </h1>
 
-    <!-- Mensagem de status da autenticação Firebase (inicialmente oculta) -->
-    <p id="firebase-auth-status" class="text-yellow-300 mb-4 hidden">Autenticando com Firebase...</p>
-
     <!-- Área para exibir mensagens de erro (inicialmente oculta) -->
     <div id="error-message" class="bg-red-600 text-white p-4 rounded-lg mb-6 shadow-md w-full max-w-2xl text-center hidden">
         <!-- A mensagem de erro será injetada aqui pelo JavaScript -->
+    </div>
+    
+    <!-- Botão para limpar a história salva (mostrado quando uma história é carregada) -->
+    <div id="new-story-section" class="w-full max-w-xl text-center mb-4 hidden">
+        <button
+            id="clear-story-button"
+            class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transform transition-all duration-300 hover:scale-105"
+        >
+            Limpar História Salva e Começar de Novo
+        </button>
     </div>
 
     <!-- Seção inicial para o prompt do usuário e seleção de estilo -->
@@ -60,9 +73,8 @@
 
     <!-- Indicador de carregamento (mostrado durante a geração de cenas) -->
     <div id="loading-indicator" class="flex items-center justify-center bg-white bg-opacity-10 p-6 rounded-xl shadow-2xl backdrop-blur-sm mt-8 w-full max-w-2xl border border-purple-500 hidden">
-        <!-- Ícone de carregamento giratório (SVG) -->
         <svg class="animate-spin h-8 w-8 text-white mr-3" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
         <p class="text-xl font-semibold">Gerando a próxima cena, por favor aguarde...</p>
@@ -100,20 +112,16 @@
     <p id="user-id-display" class="text-xs text-gray-400 mt-10">ID do Usuário: Carregando...</p>
 
     <!-- Bloco de script JavaScript com lógica da aplicação -->
-    <script type="module">
-        // Importa módulos Firebase do CDN
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    <script>
+        // !!! IMPORTANTE !!! 
+        // SUBSTITUA A URL ABAIXO PELA URL REAL DO SEU BACKEND NO RENDER.COM
+        const RENDER_BACKEND_URL = 'https://historias-jdzh.onrender.com';
 
-        // Variáveis de estado globais (substituem os 'useState' do React)
+        // Variáveis de estado globais
         let db = null;
-        let auth = null;
         let userId = null;
-        let initialPrompt = '';
         let storyScenes = []; // Array de cenas: [{image: url, caption: text, prompt: text}]
         let options = []; // Opções para a próxima cena
-        let customPrompt = '';
         let selectedStyle = 'realista';
         let loading = false;
         let error = null;
@@ -121,8 +129,9 @@
         let characterDescription = '';
 
         // Referências aos elementos da UI no DOM
-        const firebaseAuthStatusElem = document.getElementById('firebase-auth-status');
         const errorMessageElem = document.getElementById('error-message');
+        const newStorySectionElem = document.getElementById('new-story-section');
+        const clearStoryButton = document.getElementById('clear-story-button');
         const initialPromptSectionElem = document.getElementById('initial-prompt-section');
         const initialPromptTextarea = document.getElementById('initial-prompt-textarea');
         const imageStyleSelect = document.getElementById('image-style-select');
@@ -135,7 +144,7 @@
         const generateNextSceneButton = document.getElementById('generate-next-scene-button');
         const userIdDisplay = document.getElementById('user-id-display');
 
-        // Opções de estilos de imagem (idênticas às do componente React)
+        // Opções de estilos de imagem
         const imageStyles = [
             { label: 'Realista', value: 'realista' },
             { label: 'Desenho Animado', value: 'desenho animado' },
@@ -145,40 +154,24 @@
             { label: 'Aquarela', value: 'aquarela' },
             { label: 'Pixel Art', value: 'pixel art' },
         ];
-
+        
         /**
          * Atualiza a interface do usuário com base nas variáveis de estado globais.
-         * Esta função simula o mecanismo de "re-renderização" do React.
          */
         const updateUI = () => {
-            // Gerencia a exibição da mensagem de erro
-            if (error) {
-                errorMessageElem.textContent = error;
-                errorMessageElem.classList.remove('hidden');
-            } else {
-                errorMessageElem.classList.add('hidden');
-            }
+            errorMessageElem.classList.toggle('hidden', !error);
+            if (error) errorMessageElem.textContent = error;
+            
+            loadingIndicator.classList.toggle('hidden', !loading);
 
-            // Gerencia a exibição do indicador de carregamento
-            if (loading) {
-                loadingIndicator.classList.remove('hidden');
-            } else {
-                loadingIndicator.classList.add('hidden');
-            }
-
-            // Gerencia a visibilidade da seção de prompt inicial
-            if (storyScenes.length === 0) {
-                initialPromptSectionElem.classList.remove('hidden');
-                initialPromptTextarea.disabled = loading;
-                imageStyleSelect.disabled = loading;
-                startStoryButton.disabled = loading || !userId; // Desabilita se estiver carregando ou sem userId
-                startStoryButton.textContent = loading ? 'Gerando Primeira Cena...' : 'Iniciar História';
-            } else {
-                initialPromptSectionElem.classList.add('hidden');
-            }
-
-            // Renderiza as cenas da história
-            storyScenesContainer.innerHTML = ''; // Limpa as cenas existentes
+            const storyStarted = storyScenes.length > 0;
+            initialPromptSectionElem.classList.toggle('hidden', storyStarted);
+            newStorySectionElem.classList.toggle('hidden', !storyStarted || loading);
+            
+            startStoryButton.disabled = loading || !userId;
+            startStoryButton.textContent = loading ? 'Gerando Primeira Cena...' : 'Iniciar História';
+            
+            storyScenesContainer.innerHTML = '';
             storyScenes.forEach((scene, index) => {
                 const sceneDiv = document.createElement('div');
                 sceneDiv.className = "bg-white bg-opacity-10 p-6 rounded-xl shadow-2xl backdrop-blur-sm mb-8 border border-purple-500";
@@ -195,359 +188,243 @@
                 storyScenesContainer.appendChild(sceneDiv);
             });
 
-            // Gerencia a visibilidade e o conteúdo da seção de opções
-            if (!loading && storyScenes.length > 0 && options.length > 0) {
-                optionsSectionElem.classList.remove('hidden');
-                optionsGrid.innerHTML = ''; // Limpa os botões de opção existentes
-                options.forEach((optionText, index) => {
+            const showOptions = !loading && storyStarted && options.length > 0;
+            optionsSectionElem.classList.toggle('hidden', !showOptions);
+            if (showOptions) {
+                optionsGrid.innerHTML = '';
+                options.forEach(optionText => {
                     const button = document.createElement('button');
                     button.className = "bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg shadow-md transform transition-all duration-200 hover:scale-105 text-left disabled:opacity-50 disabled:cursor-not-allowed";
                     button.textContent = optionText;
                     button.disabled = loading;
-                    button.onclick = () => generateNextScene(optionText); // Adiciona o evento de clique
+                    button.onclick = () => generateNextScene(optionText);
                     optionsGrid.appendChild(button);
                 });
                 customPromptTextarea.disabled = loading;
-                generateNextSceneButton.disabled = loading || !customPromptTextarea.value.trim(); // Atualiza o estado do botão
-            } else {
-                optionsSectionElem.classList.add('hidden');
+                generateNextSceneButton.disabled = loading || !customPromptTextarea.value.trim();
             }
 
-            // Atualiza a exibição do ID do usuário
-            userIdDisplay.textContent = `ID do Usuário: ${userId || 'Carregando...'}`;
-            // Gerencia a exibição da mensagem de autenticação do Firebase
-            if (!userId) {
-                firebaseAuthStatusElem.classList.remove('hidden');
-            } else {
-                firebaseAuthStatusElem.classList.add('hidden');
+            userIdDisplay.textContent = `ID do Usuário: ${userId || 'N/A'}`;
+        };
+
+        // --- LÓGICA DO INDEXEDDB ---
+        const initDB = () => new Promise((resolve, reject) => {
+            const request = indexedDB.open('storyDB', 1);
+            request.onupgradeneeded = e => e.target.result.createObjectStore('stories', { keyPath: 'id' });
+            request.onsuccess = e => { db = e.target.result; resolve(db); };
+            request.onerror = e => { error = "Erro no DB. Progresso não será salvo."; reject(e.target.error); };
+        });
+
+        const saveStoryToDB = () => {
+            if (!db) return;
+            const storyState = { id: 'currentStory', scenes: storyScenes, context: storyContext, charDesc: characterDescription, opts: options, style: selectedStyle };
+            db.transaction(['stories'], 'readwrite').objectStore('stories').put(storyState);
+        };
+        
+        const loadStoryFromDB = () => new Promise(resolve => {
+            if (!db) return resolve();
+            const request = db.transaction(['stories'], 'readonly').objectStore('stories').get('currentStory');
+            request.onsuccess = () => {
+                if (request.result) {
+                    const { scenes, context, charDesc, opts, style } = request.result;
+                    storyScenes = scenes || [];
+                    storyContext = context || [];
+                    characterDescription = charDesc || '';
+                    options = opts || [];
+                    selectedStyle = style || 'realista';
+                    imageStyleSelect.value = selectedStyle;
+                }
+                resolve();
+            };
+            request.onerror = () => resolve();
+        });
+        
+        const clearStory = () => {
+            if (!db) {
+                storyScenes = [], options = [], storyContext = [], characterDescription = '', error = null, updateUI();
+                return;
+            }
+            db.transaction(['stories'], 'readwrite').objectStore('stories').delete('currentStory').onsuccess = () => window.location.reload();
+        };
+
+        // --- LÓGICA DA API (RENDER.COM) ---
+
+        /**
+         * Função para gerar uma imagem usando o backend no Render.
+         * @param {string} imagePrompt - O prompt de texto para gerar a imagem.
+         * @returns {Promise<string|null>} URL da imagem base64 ou null em caso de erro.
+         */
+        const generateImage = async (imagePrompt) => {
+            try {
+                const apiUrl = `${RENDER_BACKEND_URL}/generate-image`;
+                const payload = { prompt: imagePrompt, style: selectedStyle };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: `Erro do servidor: ${response.status}. Verifique o console do backend.` }));
+                    throw new Error(errorData.error);
+                }
+
+                const result = await response.json();
+                if (result.bytesBase64Encoded) {
+                    return `data:image/png;base64,${result.bytesBase64Encoded}`;
+                } else {
+                    throw new Error("Resposta inesperada do servidor de imagem.");
+                }
+            } catch (err) {
+                console.error("Erro ao gerar imagem:", err);
+                error = `Falha ao gerar imagem: ${err.message}. Verifique se a URL do backend no Render está correta e se o serviço está no ar.`;
+                updateUI();
+                return null;
             }
         };
 
-        // Inicialização do Firebase e Listener de Autenticação
-        window.onload = async () => {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        /**
+         * Função para gerar texto usando o backend no Render.
+         * @param {string} prompt - O prompt de texto para o modelo de linguagem.
+         * @param {object|null} schema - Esquema JSON opcional para resposta estruturada.
+         * @returns {Promise<string|object|null>} Texto gerado, objeto JSON ou null em caso de erro.
+         */
+        const generateText = async (prompt, schema = null) => {
+            try {
+                const apiUrl = `${RENDER_BACKEND_URL}/generate-text`;
+                const payload = { context: storyContext, prompt: prompt, schema: schema };
 
-            if (Object.keys(firebaseConfig).length > 0) {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-
-                // Listener para mudanças no estado de autenticação
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        updateUI(); // Atualiza a UI após o userId ser definido
-                    } else {
-                        try {
-                            // Tenta autenticar com token personalizado ou anonimamente
-                            if (typeof __initial_auth_token !== 'undefined') {
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                            // O userId será definido pelo próximo gatilho de onAuthStateChanged
-                        } catch (err) {
-                            console.error("Erro de autenticação do Firebase:", err);
-                            error = "Erro ao autenticar com o Firebase. Por favor, recarregue a página.";
-                            updateUI();
-                        }
-                    }
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
-            } else {
-                 console.warn("Configuração do Firebase não encontrada. O aplicativo será executado sem os recursos do Firebase.");
-                 userId = 'N/A (Sem Firebase)'; // Define um valor padrão se a configuração do Firebase estiver faltando
-                 updateUI();
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: `Erro do servidor: ${response.status}. Verifique o console do backend.` }));
+                    throw new Error(errorData.error);
+                }
+                
+                const result = await response.json();
+                if (result.text) {
+                    return schema ? JSON.parse(result.text) : result.text;
+                } else {
+                    throw new Error("Resposta inesperada do servidor de texto.");
+                }
+            } catch (err) {
+                console.error("Erro ao gerar texto:", err);
+                error = `Falha ao gerar texto: ${err.message}. Verifique se a URL do backend no Render está correta e se o serviço está no ar.`;
+                updateUI();
+                return null;
             }
+        };
 
-            // Preenche o seletor de estilo de imagem com as opções disponíveis
+        // --- LÓGICA PRINCIPAL DA HISTÓRIA ---
+        const startStory = async () => {
+            const initialPrompt = initialPromptTextarea.value.trim();
+            if (!initialPrompt) {
+                error = "Por favor, digite um prompt para iniciar a história.";
+                updateUI();
+                return;
+            }
+            loading = true, error = null, storyScenes = [], storyContext = [], characterDescription = '', updateUI();
+
+            try {
+                const initialCharacterAndScenePrompt = `Com base no seguinte prompt de história, descreva os personagens principais e o cenário inicial em detalhe... Prompt do usuário: "${initialPrompt}" Formato JSON: { "characterDescription": "...", "initialSceneCaption": "..." }`;
+                const initialDetailsSchema = { type: "OBJECT", properties: { characterDescription: { type: "STRING" }, initialSceneCaption: { type: "STRING" } } };
+                const initialDetails = await generateText(initialCharacterAndScenePrompt, initialDetailsSchema);
+
+                if (!initialDetails?.characterDescription || !initialDetails?.initialSceneCaption) throw new Error("Não foi possível gerar os detalhes iniciais da história.");
+
+                characterDescription = initialDetails.characterDescription;
+                const sceneCaption = initialDetails.initialSceneCaption;
+                const imagePrompt = `${characterDescription}. ${sceneCaption}`;
+
+                const imageUrl = await generateImage(imagePrompt);
+                if (!imageUrl) throw new Error("Não foi possível gerar a imagem da primeira cena.");
+
+                const newScene = { image: imageUrl, caption: sceneCaption, prompt: initialPrompt };
+                storyScenes.push(newScene);
+                storyContext.push(newScene);
+
+                const optionsPrompt = `A história atual é: "${sceneCaption}". Gere 3 opções distintas para a próxima cena...`;
+                const optionsSchema = { type: "OBJECT", properties: { options: { type: "ARRAY", items: { type: "STRING" } } } };
+                const generatedOptions = await generateText(optionsPrompt, optionsSchema);
+                options = generatedOptions?.options || [];
+
+                saveStoryToDB();
+            } catch (err) {
+                error = err.message || "Ocorreu um erro desconhecido ao iniciar a história.";
+            } finally {
+                loading = false, updateUI();
+            }
+        };
+
+        const generateNextScene = async (selectedOption = null) => {
+            const nextScenePromptValue = (selectedOption || customPromptTextarea.value).trim();
+            if (!nextScenePromptValue) {
+                error = "Selecione uma opção ou digite um prompt.";
+                updateUI();
+                return;
+            }
+            loading = true, error = null, updateUI();
+            customPromptTextarea.value = '';
+
+            try {
+                const lastScene = storyScenes[storyScenes.length - 1];
+                const captionGenerationPrompt = `A história terminou com: "${lastScene.caption}". O próximo evento é: "${nextScenePromptValue}". Escreva a próxima parte da história...`;
+                const sceneCaption = await generateText(captionGenerationPrompt);
+                if (!sceneCaption) throw new Error("Não foi possível gerar a legenda da cena.");
+
+                const imagePrompt = `${characterDescription}. ${sceneCaption}`;
+                const imageUrl = await generateImage(imagePrompt);
+                if (!imageUrl) throw new Error("Não foi possível gerar a imagem da cena.");
+
+                const newScene = { image: imageUrl, caption: sceneCaption, prompt: nextScenePromptValue };
+                storyScenes.push(newScene);
+                storyContext.push(newScene);
+
+                const optionsPrompt = `A história agora é: "${sceneCaption}". Gere 3 opções para continuar...`;
+                const optionsSchema = { type: "OBJECT", properties: { options: { type: "ARRAY", items: { type: "STRING" } } } };
+                const generatedOptions = await generateText(optionsPrompt, optionsSchema);
+                options = generatedOptions?.options || [];
+
+                saveStoryToDB();
+            } catch (err) {
+                error = err.message || "Ocorreu um erro desconhecido.";
+            } finally {
+                loading = false, updateUI();
+            }
+        };
+
+        // --- INICIALIZAÇÃO DA APLICAÇÃO ---
+        window.onload = async () => {
+            userId = localStorage.getItem('storyGeneratorUserId') || crypto.randomUUID();
+            localStorage.setItem('storyGeneratorUserId', userId);
+            
             imageStyles.forEach(style => {
                 const option = document.createElement('option');
                 option.value = style.value;
                 option.textContent = style.label;
                 imageStyleSelect.appendChild(option);
             });
-            imageStyleSelect.value = selectedStyle; // Define o valor inicial selecionado
-
-            updateUI(); // Renderização inicial da UI
-        };
-
-        /**
-         * Função para gerar uma imagem usando a API Imagen.
-         * @param {string} imagePrompt - O prompt de texto para gerar a imagem.
-         * @returns {Promise<string|null>} URL da imagem base64 ou null em caso de erro.
-         */
-        const generateImage = async (imagePrompt) => {
-            try {
-                const apiKey = ""; // A chave da API será fornecida pelo ambiente Canvas
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
-                const payload = {
-                    instances: {
-                        // Inclui a descrição dos personagens e o estilo para consistência
-                        // Adicionado instrução para manter características faciais e vestimentas.
-                        prompt: `${imagePrompt}. Estilo: ${selectedStyle}. Por favor, mantenha a consistência dos personagens, características faciais e vestimentas, e do cenário ao longo da história.`
-                    },
-                    parameters: { "sampleCount": 1 }
-                };
-
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-                if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
-                    return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-                } else {
-                    throw new Error("Resposta inesperada da API de imagem. Nenhuma imagem foi gerada.");
-                }
-            } catch (err) {
-                console.error("Erro ao gerar imagem:", err);
-                error = "Falha ao gerar imagem. Por favor, tente novamente.";
-                updateUI(); // Atualiza a UI para exibir o erro
-                return null;
-            }
-        };
-
-        /**
-         * Função para gerar texto usando a API Gemini.
-         * @param {string} prompt - O prompt de texto para o Gemini.
-         * @param {object|null} schema - Esquema JSON opcional para resposta estruturada.
-         * @returns {Promise<string|object|null>} Texto gerado, objeto JSON ou null em caso de erro.
-         */
-        const generateText = async (prompt, schema = null) => {
-            try {
-                const apiKey = ""; // A chave da API será fornecida pelo ambiente Canvas
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-                let chatHistory = [];
-                // Adiciona todo o contexto da história anterior para manter a coerência
-                storyContext.forEach(scene => {
-                    chatHistory.push({ role: "user", parts: [{ text: scene.prompt }] });
-                    chatHistory.push({ role: "model", parts: [{ text: scene.caption }] });
-                });
-                // Adiciona o prompt atual do usuário
-                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-
-                const payload = {
-                    contents: chatHistory,
-                    generationConfig: schema ? {
-                        responseMimeType: "application/json",
-                        responseSchema: schema
-                    } : {}
-                };
-
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    const text = result.candidates[0].content.parts[0].text;
-                    return schema ? JSON.parse(text) : text;
-                } else {
-                    throw new Error("Resposta inesperada da API de texto. Nenhum texto foi gerado.");
-                }
-            } catch (err) {
-                console.error("Erro ao gerar texto:", err);
-                error = "Falha ao gerar texto. Por favor, tente novamente.";
-                updateUI(); // Atualiza a UI para exibir o erro
-                return null;
-            }
-        };
-
-        /**
-         * Inicia a história gerando a primeira cena e suas opções.
-         */
-        const startStory = async () => {
-            initialPrompt = initialPromptTextarea.value; // Obtém o valor atual da textarea
-            if (!initialPrompt.trim()) {
-                error = "Por favor, digite um prompt para iniciar a história.";
-                updateUI();
-                return;
-            }
-            loading = true;
-            error = null;
-            storyScenes = [];
-            storyContext = [];
-            characterDescription = '';
-            updateUI(); // Atualiza a UI para mostrar o estado de carregamento
+            
+            startStoryButton.addEventListener('click', startStory);
+            clearStoryButton.addEventListener('click', clearStory);
+            imageStyleSelect.addEventListener('change', e => selectedStyle = e.target.value);
+            generateNextSceneButton.addEventListener('click', () => generateNextScene(null));
+            customPromptTextarea.addEventListener('input', () => generateNextSceneButton.disabled = loading || !customPromptTextarea.value.trim());
 
             try {
-                // 1. Gera a descrição inicial dos personagens e a legenda da primeira cena
-                const initialCharacterAndScenePrompt = `Com base no seguinte prompt de história, descreva os personagens principais e o cenário inicial em detalhe para que eu possa usá-los para manter a consistência em cenas futuras. Inclua nomes se forem fornecidos, idade aproximada, características físicas e traços de personalidade importantes. Se nenhum personagem específico for mencionado, crie um ou dois personagens genéricos apropriados para o prompt.
-                Além disso, crie um texto resumido, como um trecho de uma história, para a primeira cena da história, focando nos personagens e no cenário.
-
-                Prompt do usuário: "${initialPrompt}"
-
-                Formato da resposta JSON esperado:
-                {
-                    "characterDescription": "Descrição dos personagens, ex: 'Um jovem chamado Arthur, de 20 anos, com cabelos castanhos e olhos curiosos, vestindo roupas de explorador. Ele é corajoso e um pouco impulsivo.'",
-                    "initialSceneCaption": "Breve introdução da primeira cena, ex: 'Arthur se aventurava por uma floresta densa e mística, com árvores gigantes e uma névoa suave no chão.'"
-                }`;
-
-                const initialDetailsSchema = {
-                    type: "OBJECT",
-                    properties: {
-                        characterDescription: { type: "STRING" },
-                        initialSceneCaption: { type: "STRING" }
-                    },
-                    propertyOrdering: ["characterDescription", "initialSceneCaption"]
-                };
-                const initialDetails = await generateText(initialCharacterAndScenePrompt, initialDetailsSchema);
-
-                if (!initialDetails || !initialDetails.characterDescription || !initialDetails.initialSceneCaption) {
-                    throw new Error("Não foi possível gerar os detalhes iniciais da história. Tente um prompt diferente.");
-                }
-
-                characterDescription = initialDetails.characterDescription;
-                const sceneCaption = initialDetails.initialSceneCaption;
-                // Combina a descrição dos personagens e a legenda da cena para o prompt da imagem
-                const imagePrompt = `${initialDetails.characterDescription}. ${sceneCaption}`;
-
-                // 2. Gera a primeira imagem
-                const imageUrl = await generateImage(imagePrompt);
-                if (!imageUrl) {
-                    throw new Error("Não foi possível gerar a imagem da primeira cena.");
-                }
-
-                // Adiciona a primeira cena ao estado da história e ao contexto
-                const newScene = { image: imageUrl, caption: sceneCaption, prompt: initialPrompt };
-                storyScenes.push(newScene);
-                storyContext.push(newScene);
-
-                // 3. Gera 3 opções para o desenvolvimento da próxima cena
-                const optionsPrompt = `A história atual é: "${sceneCaption}". Com base nisso e nos personagens ${initialDetails.characterDescription}, gere 3 opções distintas para o desenvolvimento da próxima cena. Cada opção deve ser um breve resumo da ação, mantendo a coerência com o enredo atual e os personagens.
-
-                Formato da resposta JSON esperado:
-                {
-                    "options": ["Opção 1", "Opção 2", "Opção 3"]
-                }`;
-
-                const optionsSchema = {
-                    type: "OBJECT",
-                    properties: {
-                        options: {
-                            type: "ARRAY",
-                            items: { type: "STRING" }
-                        }
-                    },
-                    propertyOrdering: ["options"]
-                };
-
-                const generatedOptions = await generateText(optionsPrompt, optionsSchema);
-                if (generatedOptions && generatedOptions.options) {
-                    options = generatedOptions.options;
-                } else {
-                    options = [];
-                }
-
+                await initDB();
+                await loadStoryFromDB();
             } catch (err) {
-                console.error("Erro ao iniciar a história:", err);
-                error = err.message || "Ocorreu um erro desconhecido ao iniciar a história.";
+                 // Erro já tratado em initDB
             } finally {
-                loading = false;
-                updateUI(); // Finaliza o carregamento e atualiza a UI
-            }
-        };
-
-        /**
-         * Gera a próxima cena da história com base na opção selecionada ou prompt personalizado.
-         * @param {string|null} selectedOption - A opção escolhida pelo usuário, ou null se for um prompt personalizado.
-         */
-        const generateNextScene = async (selectedOption = null) => {
-            loading = true;
-            error = null;
-            updateUI(); // Mostra o estado de carregamento
-
-            const lastScene = storyScenes[storyScenes.length - 1]; // Pega a última cena para contexto
-            let nextScenePromptValue = selectedOption || customPromptTextarea.value; // Usa a opção selecionada ou o valor da textarea
-
-            if (!nextScenePromptValue.trim()) {
-                error = "Por favor, selecione uma opção ou digite um prompt para a próxima cena.";
-                loading = false;
                 updateUI();
-                return;
-            }
-            customPromptTextarea.value = ''; // Limpa a textarea do prompt personalizado após o uso
-
-            try {
-                // 1. Gera a legenda da próxima cena
-                const captionGenerationPrompt = `A história atual terminou com: "${lastScene.caption}". O próximo evento escolhido para a história é: "${nextScenePromptValue}". 
-                
-                Considerando o contexto da história até agora, os personagens principais (${characterDescription}), e o estilo de imagem "${selectedStyle}", escreva um texto resumido, como um trecho de uma história, para a próxima cena. A legenda deve ser uma descrição vívida da cena, adequada para gerar uma imagem, focando em como os personagens interagem com o novo evento e o ambiente. Mantenha a consistência visual dos personagens e do cenário, e certifique-se de que a narrativa se encaixe no enredo geral da história.`;
-
-                const sceneCaption = await generateText(captionGenerationPrompt);
-                if (!sceneCaption) {
-                    throw new Error("Não foi possível gerar a legenda da próxima cena.");
-                }
-
-                // Combina a descrição dos personagens e a nova legenda para o prompt da imagem
-                const imagePrompt = `${characterDescription}. ${sceneCaption}`;
-
-                // 2. Gera a próxima imagem
-                const imageUrl = await generateImage(imagePrompt);
-                if (!imageUrl) {
-                    throw new Error("Não foi possível gerar a imagem da próxima cena.");
-                }
-
-                // Adiciona a nova cena ao estado e ao contexto
-                const newScene = { image: imageUrl, caption: sceneCaption, prompt: nextScenePromptValue };
-                storyScenes.push(newScene);
-                storyContext.push(newScene);
-
-                // 3. Gera novas opções para a cena seguinte
-                const optionsPrompt = `A história agora terminou com: "${sceneCaption}". Com base nisso e nos personagens ${characterDescription}, gere 3 opções distintas para o desenvolvimento da próxima cena. Cada opção deve ser um breve resumo da ação, mantendo a coerência com o enredo atual e os personagens.
-
-                Formato da resposta JSON esperado:
-                {
-                    "options": ["Opção 1", "Opção 2", "Opção 3"]
-                }`;
-
-                const optionsSchema = {
-                    type: "OBJECT",
-                    properties: {
-                        options: {
-                            type: "ARRAY",
-                            items: { type: "STRING" }
-                        }
-                    },
-                    propertyOrdering: ["options"]
-                };
-
-                const generatedOptions = await generateText(optionsPrompt, optionsSchema);
-                if (generatedOptions && generatedOptions.options) {
-                    options = generatedOptions.options;
-                } else {
-                    options = [];
-                }
-
-            } catch (err) {
-                console.error("Erro ao gerar próxima cena:", err);
-                error = err.message || "Ocorreu um erro desconhecido ao gerar a próxima cena.";
-            } finally {
-                loading = false;
-                updateUI(); // Finaliza o carregamento e atualiza a UI
             }
         };
-
-        // Adiciona listeners de evento aos elementos da UI
-        startStoryButton.addEventListener('click', startStory);
-        imageStyleSelect.addEventListener('change', (e) => {
-            selectedStyle = e.target.value; // Atualiza o estilo selecionado
-            updateUI(); // Opcional: atualiza a UI para refletir a mudança imediatamente
-        });
-        generateNextSceneButton.addEventListener('click', () => generateNextScene(null)); // Para o prompt personalizado
-        customPromptTextarea.addEventListener('input', () => {
-            // Atualiza o estado do botão 'Gerar Próxima Cena' com base no input personalizado
-            generateNextSceneButton.disabled = loading || !customPromptTextarea.value.trim();
-        });
-
     </script>
 </body>
 </html>
