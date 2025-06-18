@@ -334,7 +334,7 @@ if not st.session_state.story_scenes and not st.session_state.loading:
 if st.session_state.story_scenes:
     for i, scene in enumerate(st.session_state.story_scenes):
         st.markdown(f"## Cena {i + 1}")
-        st.image(scene['image'], caption=f"Cena {i + 1}", use_column_width="always")
+        st.image(scene['image'], caption=f"Cena {i + 1}", use_container_width="always")
         st.markdown(f"<p style='font-size: 1.1em; text-align: justify;'>{scene['caption']}</p>", unsafe_allow_html=True)
         st.markdown("---") # Separador entre cenas
 
