@@ -3,6 +3,9 @@ import requests
 import json
 import uuid
 import base64
+import warnings
+
+warnings.filterwarnings('ignore')
 
 # --- Configurações da API ---
 # As chaves de API devem ser armazenadas de forma segura.
