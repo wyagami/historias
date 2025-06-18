@@ -109,8 +109,10 @@ def initialize_session_state():
         st.session_state.character_description = ""
     if "options" not in st.session_state:
         st.session_state.options = [] # Opções para a próxima cena
-    if "selected_style" not in st.session_state:
-        st.session_state.selected_style = 'realista'
+    if "selected_image_style" not in st.session_state: # Renomeado para clareza
+        st.session_state.selected_image_style = 'realista'
+    if "selected_story_style" not in st.session_state: # Novo para estilo da história
+        st.session_state.selected_story_style = 'aventura' # Estilo padrão
     if "loading" not in st.session_state:
         st.session_state.loading = False
     if "error_message" not in st.session_state:
@@ -131,11 +133,23 @@ IMAGE_STYLES = [
     {'label': 'Pixel Art', 'value': 'pixel art'},
 ]
 
+# --- Opções de Estilos de História (NOVO) ---
+STORY_STYLES = [
+    {'label': 'Aventura', 'value': 'aventura'},
+    {'label': 'Ficção Científica', 'value': 'ficção científica'},
+    {'label': 'Comédia', 'value': 'comédia'},
+    {'label': 'Suspense', 'value': 'suspense'},
+    {'label': 'Fantasia', 'value': 'fantasia'},
+    {'label': 'Mistério', 'value': 'mistério'},
+    {'label': 'Terror', 'value': 'terror'},
+    {'label': 'Romance', 'value': 'romance'},
+]
+
 # --- Lógica Principal da História ---
 
 def start_story(initial_prompt):
     """
-    Inicia uma nova história com base no prompt inicial.
+    Inicia uma nova história com base no prompt inicial e estilo selecionado.
     """
     if not initial_prompt.strip():
         st.session_state.error_message = "Por favor, digite um prompt para iniciar a história."
@@ -152,8 +166,10 @@ def start_story(initial_prompt):
         try:
             # 1. Gerar descrição do personagem e legenda da cena inicial
             initial_character_and_scene_prompt = f"""
+            Crie uma história no estilo de {st.session_state.selected_story_style}.
             Com base no seguinte prompt de história, descreva os personagens principais e o cenário inicial em detalhe.
-            Foque em detalhes que seriam úteis para uma geração de imagem.
+            Foque em detalhes que seriam úteis para uma geração de imagem e que se encaixem no estilo da história.
+            IMPORTANTE: Mantenha a consistência dos personagens e o tom do estilo da história.
             Prompt do usuário: "{initial_prompt}"
 
             Responda no formato JSON. Exemplo:
@@ -176,7 +192,7 @@ def start_story(initial_prompt):
             image_prompt = f"{st.session_state.character_description}. {scene_caption}"
 
             # 2. Gerar imagem da primeira cena
-            image_url = generate_image(image_prompt, st.session_state.selected_style)
+            image_url = generate_image(image_prompt, st.session_state.selected_image_style)
             if not image_url:
                 raise Exception("Não foi possível gerar a imagem da primeira cena.")
 
@@ -186,8 +202,8 @@ def start_story(initial_prompt):
 
             # 3. Gerar opções para a próxima cena
             options_prompt = f"""
-            A história atual é: "{scene_caption}".
-            Gere 3 opções distintas e concisas para a próxima cena.
+            A história atual, no estilo de {st.session_state.selected_story_style}, é: "{scene_caption}".
+            Gere 3 opções distintas e concisas para a próxima cena, mantendo o tom e o estilo da história.
             Responda no formato JSON. Exemplo:
             {{ "options": ["Opção 1", "Opção 2", "Opção 3"] }}
             """
@@ -225,9 +241,9 @@ def generate_next_scene(selected_option=None):
 
             # 1. Gerar a legenda da próxima cena
             caption_generation_prompt = f"""
-            A história terminou com a seguinte cena: "{last_scene['caption']}".
+            A história, no estilo de {st.session_state.selected_story_style}, terminou com a seguinte cena: "{last_scene['caption']}".
             O próximo evento escolhido é: "{next_scene_prompt_value}".
-            Escreva a próxima parte da história em um parágrafo conciso, continuando de forma lógica.
+            Escreva a próxima parte da história em um parágrafo conciso, continuando de forma lógica e mantendo o tom do estilo.
             """
             scene_caption = generate_text(caption_generation_prompt)
             if not scene_caption:
@@ -235,7 +251,7 @@ def generate_next_scene(selected_option=None):
 
             # 2. Gerar a imagem para a próxima cena
             image_prompt = f"{st.session_state.character_description}. {scene_caption}"
-            image_url = generate_image(image_prompt, st.session_state.selected_style)
+            image_url = generate_image(image_prompt, st.session_state.selected_image_style)
             if not image_url:
                 raise Exception("Não foi possível gerar a imagem da próxima cena.")
 
@@ -245,8 +261,8 @@ def generate_next_scene(selected_option=None):
 
             # 3. Gerar novas opções para a continuação
             options_prompt = f"""
-            A história agora é: "{scene_caption}".
-            Gere 3 opções distintas e concisas para continuar a história.
+            A história, no estilo de {st.session_state.selected_story_style}, agora é: "{scene_caption}".
+            Gere 3 opções distintas e concisas para continuar a história, mantendo o tom e o estilo.
             Responda no formato JSON. Exemplo:
             {{ "options": ["Opção A", "Opção B", "Opção C"] }}
             """
@@ -275,6 +291,8 @@ def clear_story():
     st.session_state.options = []
     st.session_state.loading = False
     st.session_state.error_message = None
+    st.session_state.selected_image_style = 'realista' # Resetar para o padrão
+    st.session_state.selected_story_style = 'aventura' # Resetar para o padrão
     # Força um rerun para garantir que toda a UI seja redefinida para o estado inicial
     st.rerun()
 
@@ -313,14 +331,27 @@ if not st.session_state.story_scenes and not st.session_state.loading:
         key="initial_prompt_input"
     )
 
-    style_options = {style['label']: style['value'] for style in IMAGE_STYLES}
-    selected_style_label = st.selectbox(
-        "Estilo da Imagem:",
-        options=list(style_options.keys()),
-        index=list(style_options.values()).index(st.session_state.selected_style),
-        key="image_style_select"
+    # SELETOR DE ESTILO DE HISTÓRIA (NOVO)
+    story_style_options = {style['label']: style['value'] for style in STORY_STYLES}
+    selected_story_style_label = st.selectbox(
+        "Estilo da História:",
+        options=list(story_style_options.keys()),
+        index=list(story_style_options.values()).index(st.session_state.selected_story_style),
+        key="story_style_select",
+        help="Escolha o gênero da sua história."
     )
-    st.session_state.selected_style = style_options[selected_style_label]
+    st.session_state.selected_story_style = story_style_options[selected_story_style_label]
+
+
+    image_style_options = {style['label']: style['value'] for style in IMAGE_STYLES}
+    selected_image_style_label = st.selectbox(
+        "Estilo da Imagem:",
+        options=list(image_style_options.keys()),
+        index=list(image_style_options.values()).index(st.session_state.selected_image_style),
+        key="image_style_select",
+        help="Escolha o estilo visual das imagens geradas."
+    )
+    st.session_state.selected_image_style = image_style_options[selected_image_style_label]
 
     st.button(
         "Iniciar História",
